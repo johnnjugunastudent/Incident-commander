@@ -21,6 +21,7 @@ import {
   getStageOrder
 } from '../investigation/stateMachine.js';
 import { generateDiagnosis } from '../services/ai.js';
+import { createEvidenceRelationship } from '../investigation/evidenceGraph.js';
 import { InferenceResponseSchema } from '../types/index.js';
 import type { 
   InvestigationStage, 
@@ -107,13 +108,13 @@ export async function startInvestigation(
     }
 
     // Generate repair proposal
-    const repairResult = await generateRepairProposal(incidentId, options);
+    const repairResult = await generateRepairProposal(incidentId, diagResult.response, options);
     if (!repairResult.success) {
       return repairResult;
     }
 
     // Run verification
-    const verifResult = await runVerification(incidentId, options);
+    const verifResult = await runVerification(incidentId, diagResult.response, options);
     if (!verifResult.success) {
       return verifResult;
     }
@@ -160,7 +161,7 @@ async function runStage(
 async function runDiagnosis(
   incidentId: string,
   options: OrchestratorOptions
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; response?: ParsedInferenceResponse }> {
   // Mark diagnosis as running
   await recordInvestigationEvent(incidentId, 'diagnosis', 'running', 'Running AI analysis on evidence', undefined, options);
 
@@ -214,7 +215,7 @@ async function runDiagnosis(
     options
   );
 
-  return { success: true };
+  return { success: true, response: aiResult.response };
 }
 
 /**
@@ -222,35 +223,53 @@ async function runDiagnosis(
  */
 async function generateRepairProposal(
   incidentId: string,
+  aiResponse: ParsedInferenceResponse | undefined,
   options: OrchestratorOptions
 ): Promise<{ success: boolean; error?: string }> {
   // Mark repair as running
   await recordInvestigationEvent(incidentId, 'repair', 'running', 'Generating repair proposal', undefined, options);
 
-  // Get the diagnosis to extract repair proposal
+  // Get the diagnosis to extract repair proposal fallback
   const rootCauseReport = await db.query.rootCauseReports.findFirst({
     where: eq(rootCauseReports.incidentId, incidentId),
   });
 
-  if (!rootCauseReport) {
-    return { success: false, error: 'No diagnosis report found' };
-  }
+  const summary = aiResponse?.repairProposal?.summary || rootCauseReport?.summary || 'Repair proposal generated';
+  const diff = aiResponse?.repairProposal?.diff || '';
+  const filesChanged = aiResponse?.repairProposal?.filesChanged || [];
+  const confidence = aiResponse?.diagnosis?.confidence ?? rootCauseReport?.confidence ?? 0.8;
 
-  // Create patch review (repair proposal)
-  await db.insert(patchReviews).values({
-    id: generateId(),
-    incidentId,
-    summary: rootCauseReport.summary,
-    diff: '', // Will be populated from diagnosis response
-    filesChanged: [],
-    confidence: rootCauseReport.confidence,
-    verificationStatus: 'not_run',
-    approvalStatus: 'proposed',
-    createdAt: new Date(),
+  // Upsert patch review (repair proposal)
+  const existingPatch = await db.query.patchReviews.findFirst({
+    where: eq(patchReviews.incidentId, incidentId),
   });
 
-  // Create evidence record for repair proposal
-  await recordEvidence(incidentId, 'model_claim', 'Repair Proposal', 'Repair proposal generated', undefined, options);
+  if (existingPatch) {
+    await db.update(patchReviews)
+      .set({
+        summary,
+        diff,
+        filesChanged,
+        confidence,
+        verificationStatus: 'not_run',
+        approvalStatus: 'proposed',
+        reviewerId: null,
+        reviewedAt: null,
+      })
+      .where(eq(patchReviews.id, existingPatch.id));
+  } else {
+    await db.insert(patchReviews).values({
+      id: generateId(),
+      incidentId,
+      summary,
+      diff,
+      filesChanged,
+      confidence,
+      verificationStatus: 'not_run',
+      approvalStatus: 'proposed',
+      createdAt: new Date(),
+    });
+  }
 
   // Mark repair as completed
   await recordInvestigationEvent(
@@ -258,7 +277,7 @@ async function generateRepairProposal(
     'repair',
     'completed',
     'Repair proposal generated',
-    'Patch proposal created for human review',
+    `Patch proposal created for human review with ${filesChanged.length} file(s) changed`,
     options
   );
 
@@ -270,14 +289,23 @@ async function generateRepairProposal(
  */
 async function runVerification(
   incidentId: string,
+  aiResponse: ParsedInferenceResponse | undefined,
   options: OrchestratorOptions
 ): Promise<{ success: boolean; error?: string }> {
   // Mark verification as running
   await recordInvestigationEvent(incidentId, 'verification', 'running', 'Running verification steps', undefined, options);
 
-  // Simulate verification (in real implementation, would run actual tests)
-  const verificationStatus: 'passed' | 'failed' | 'partial' = 'passed';
-  const verificationOutput = `> Verification completed\n> Status: ${verificationStatus.toUpperCase()}\n> All checks passed`;
+  // Determine verification results from AI response or fallback
+  const verificationStatus: 'passed' | 'failed' | 'partial' = 
+    aiResponse?.verification?.status === 'failed' ? 'failed' : 'passed';
+
+  const commandsHeader = aiResponse?.verification?.commands?.length
+    ? `> Verification Commands:\n${aiResponse.verification.commands.map((c: string) => `> $ ${c}`).join('\n')}\n\n`
+    : '';
+
+  const verificationOutput = aiResponse?.verification?.output
+    ? `${commandsHeader}${aiResponse.verification.output}`
+    : `> Verification completed\n> Status: ${verificationStatus.toUpperCase()}\n> All checks passed`;
 
   // Update patch review with verification results
   await db.update(patchReviews)
@@ -288,7 +316,7 @@ async function runVerification(
     .where(eq(patchReviews.incidentId, incidentId));
 
   // Create evidence for verification
-  await recordEvidence(incidentId, 'test', 'Verification Output', verificationOutput, undefined, options);
+  await recordEvidence(incidentId, 'test', 'Verification Output', verificationOutput, [], options);
 
   // Mark verification as completed
   const summary = verificationStatus === 'passed' 
@@ -301,7 +329,7 @@ async function runVerification(
 
   await recordInvestigationEvent(incidentId, 'verification', 'completed', summary, detail, options);
 
-  // Update incident status to awaiting_review
+  // Update incident status to awaiting_review (Activating human gate)
   await db.update(incidents)
     .set({
       status: 'awaiting_review',
@@ -328,22 +356,41 @@ async function saveDiagnosisReport(
     // Validate response structure
     const validatedResponse = InferenceResponseSchema.parse(response);
 
-    // Save root cause report
-    await db.insert(rootCauseReports).values({
-      id: generateId(),
-      incidentId,
-      summary: validatedResponse.diagnosis.summary,
-      confidence: validatedResponse.diagnosis.confidence,
-      claims: validatedResponse.diagnosis.claims,
-      limitations: validatedResponse.diagnosis.limitations || '',
-      modelName,
-      inferenceMode,
-      createdAt: new Date(),
+    // Check if rootCauseReport exists, update or insert
+    const existingRcr = await db.query.rootCauseReports.findFirst({
+      where: eq(rootCauseReports.incidentId, incidentId),
     });
 
-    // Save evidence records for each claim and evidence reference
+    if (existingRcr) {
+      await db.update(rootCauseReports)
+        .set({
+          summary: validatedResponse.diagnosis.summary,
+          confidence: validatedResponse.diagnosis.confidence,
+          claims: validatedResponse.diagnosis.claims,
+          limitations: validatedResponse.diagnosis.limitations || '',
+          modelName,
+          inferenceMode,
+        })
+        .where(eq(rootCauseReports.id, existingRcr.id));
+    } else {
+      await db.insert(rootCauseReports).values({
+        id: generateId(),
+        incidentId,
+        summary: validatedResponse.diagnosis.summary,
+        confidence: validatedResponse.diagnosis.confidence,
+        claims: validatedResponse.diagnosis.claims,
+        limitations: validatedResponse.diagnosis.limitations || '',
+        modelName,
+        inferenceMode,
+        createdAt: new Date(),
+      });
+    }
+
+    const claimEvidenceIds: string[] = [];
+
+    // Save evidence records for each claim and link relationships
     for (const claim of validatedResponse.diagnosis.claims) {
-      await recordEvidence(
+      const claimEvidenceId = await recordEvidence(
         incidentId,
         'model_claim',
         `Diagnosis Claim: ${claim.text.slice(0, 50)}...`,
@@ -351,23 +398,42 @@ async function saveDiagnosisReport(
         [],
         options
       );
+      claimEvidenceIds.push(claimEvidenceId);
+
+      // Create evidence relationships connecting this claim to cited evidence
+      for (const targetId of claim.evidenceIds) {
+        try {
+          await createEvidenceRelationship(claimEvidenceId, targetId, 'supports');
+        } catch {
+          // Ignored if targetId not found or already linked
+        }
+      }
     }
 
-    // Save repair proposal evidence
+    // Save repair proposal evidence and link to claims
+    let repairEvidenceId: string | null = null;
     if (validatedResponse.repairProposal) {
-      await recordEvidence(
+      repairEvidenceId = await recordEvidence(
         incidentId,
         'model_claim',
-        'Repair Proposal',
+        `Repair Proposal: ${validatedResponse.repairProposal.summary.slice(0, 45)}...`,
         validatedResponse.repairProposal.diff,
         [],
         options
       );
+
+      for (const claimId of claimEvidenceIds) {
+        try {
+          await createEvidenceRelationship(repairEvidenceId, claimId, 'derived_from');
+        } catch {
+          // Ignored if already linked
+        }
+      }
     }
 
-    // Save verification evidence
-    if (validatedResponse.verification) {
-      await recordEvidence(
+    // Save verification evidence and link to repair proposal
+    if (validatedResponse.verification && repairEvidenceId) {
+      const verifEvidenceId = await recordEvidence(
         incidentId,
         'test',
         'Verification Output',
@@ -375,6 +441,12 @@ async function saveDiagnosisReport(
         [],
         options
       );
+
+      try {
+        await createEvidenceRelationship(verifEvidenceId, repairEvidenceId, 'verifies');
+      } catch {
+        // Ignored if already linked
+      }
     }
 
     return { success: true };

@@ -2,12 +2,16 @@ import { useState } from 'react';
 import { trpc } from '../lib/trpc';
 import { toast } from 'sonner';
 import { Button, Card, CardHeader, CardContent, Badge } from './ui';
-import { ArrowLeft, AlertTriangle, CheckCircle, GitBranch, Clock, FileText, Code2, Play, ShieldCheck, Eye } from './ui';
+import { ArrowLeft, AlertTriangle, CheckCircle, GitBranch, Clock, FileText, Code2, Play, ShieldCheck, Eye, Activity, Terminal } from './ui';
 import { IncidentTimeline } from './IncidentTimeline';
 import { EvidencePanel } from './EvidencePanel';
 import { PatchReviewSection } from './PatchReviewSection';
 import { ApprovalGate } from './ApprovalGate';
 import { IncidentContext } from './IncidentContext';
+import { EvidenceGraphView } from './EvidenceGraphView';
+import { TelemetryPanel } from './TelemetryPanel';
+import { AuditTrailView } from './AuditTrailView';
+import { PostMortemExportModal } from './PostMortemExportModal';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/Tabs';
 import { Loader2 } from './ui/Loader2';
 
@@ -28,6 +32,7 @@ const STAGE_LABELS: Record<string, { label: string; icon: React.ReactNode }> = {
 export function IncidentWorkspace({ incidentId, onBack }: IncidentWorkspaceProps) {
   const [activeTab, setActiveTab] = useState('timeline');
   const [selectedEvidenceId, setSelectedEvidenceId] = useState<string | null>(null);
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
 
   const { data: incident, isLoading: isLoadingIncident } = trpc.incident.get.useQuery({ id: incidentId });
 
@@ -39,12 +44,16 @@ export function IncidentWorkspace({ incidentId, onBack }: IncidentWorkspaceProps
   const utils = trpc.useContext();
   const startInvestigation = trpc.incident.startInvestigation.useMutation({
     onSuccess: async () => {
-      toast.success('Investigation complete');
+      toast.success('Investigation complete. Patch proposed for human review.');
       await utils.incident.get.invalidate({ id: incidentId });
       await utils.investigation.getEvents.invalidate({ incidentId });
+      await utils.investigation.getEvidenceGraph.invalidate({ incidentId });
       await utils.evidence.getList.invalidate({ incidentId });
       await utils.rootCause.getReport.invalidate({ incidentId });
       await utils.patch.getReview.invalidate({ incidentId });
+      await utils.audit.getTrail.invalidate({ incidentId });
+      await utils.audit.getSummary.invalidate({ incidentId });
+      await utils.observability.getTelemetry.invalidate({ incidentId });
     },
     onError: (error) => {
       toast.error('Investigation failed: ' + error.message);
@@ -94,10 +103,22 @@ export function IncidentWorkspace({ incidentId, onBack }: IncidentWorkspaceProps
           </div>
 
           <div className="flex items-center gap-3">
+            {incident && (
+              <Button
+                variant="secondary"
+                size="sm"
+                className="h-8 gap-1.5 text-xs text-graphite-300 border border-graphite-700 hover:text-white hover:bg-graphite-800"
+                onClick={() => setIsExportModalOpen(true)}
+              >
+                <FileText className="w-3.5 h-3.5 text-violet-400" />
+                Export Post-Mortem
+              </Button>
+            )}
+
             <span className="text-sm text-graphite-400">
               {incident?.status === 'open' && <span className="inline-flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-violet-500 animate-pulse" />Open</span>}
               {incident?.status === 'investigating' && <span className="inline-flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin" />Investigating</span>}
-              {incident?.status === 'awaiting_review' && 'Awaiting Review'}
+              {incident?.status === 'awaiting_review' && <span className="inline-flex items-center gap-1.5 text-amber-400"><Clock className="w-4 h-4" />Awaiting Human Review</span>}
               {incident?.status === 'resolved' && <span className="inline-flex items-center gap-1.5 text-status-green-400"><CheckCircle className="w-4 h-4" />Resolved</span>}
               {incident?.status === 'closed' && <span className="text-graphite-500">Closed</span>}
             </span>
@@ -107,8 +128,8 @@ export function IncidentWorkspace({ incidentId, onBack }: IncidentWorkspaceProps
 
       {/* Main content */}
       <main className="relative flex-1 flex flex-col lg:flex-row gap-4 p-4 overflow-hidden">
-        {/* Left column - Timeline and Context */}
-        <div className="flex-1 flex flex-col gap-4 min-h-0 lg:max-w-2xl">
+        {/* Left column - Tabs (Timeline, Evidence, Graph, Telemetry, Audit) and Context */}
+        <div className="flex-1 flex flex-col gap-4 min-h-0">
           {/* Incident Context Card */}
           <Card className="card-elevated">
             <IncidentContext incident={incident} />
@@ -117,20 +138,35 @@ export function IncidentWorkspace({ incidentId, onBack }: IncidentWorkspaceProps
           {/* Tabs */}
           <div className="flex-1 flex flex-col min-h-0">
             <Tabs value={activeTab} onValueChange={setActiveTab}>
-              <TabsList className="bg-graphite-900 border border-graphite-800 rounded-lg p-1 mb-4 flex-shrink-0 justify-start overflow-x-auto">
-                <TabsTrigger value="timeline" className="gap-2 text-sm">
+              <TabsList className="bg-graphite-900 border border-graphite-800 rounded-lg p-1 mb-4 flex-shrink-0 justify-start overflow-x-auto gap-1">
+                <TabsTrigger value="timeline" className="gap-1.5 text-xs sm:text-sm">
                   <Clock className="w-4 h-4" />
                   Timeline
                   {(events?.length ?? 0) > 0 && (
-                    <Badge variant="violet" className="ml-1">{events?.length}</Badge>
+                    <Badge variant="violet" className="ml-1 text-[10px] py-0 px-1.5">{events?.length}</Badge>
                   )}
                 </TabsTrigger>
-                <TabsTrigger value="evidence" className="gap-2 text-sm">
+                <TabsTrigger value="evidence" className="gap-1.5 text-xs sm:text-sm">
                   <FileText className="w-4 h-4" />
                   Evidence
                   {(evidence?.length ?? 0) > 0 && (
-                    <Badge variant="cyan" className="ml-1">{evidence?.length}</Badge>
+                    <Badge variant="cyan" className="ml-1 text-[10px] py-0 px-1.5">{evidence?.length}</Badge>
                   )}
+                </TabsTrigger>
+                <TabsTrigger value="graph" className="gap-1.5 text-xs sm:text-sm">
+                  <GitBranch className="w-4 h-4 text-violet-400" />
+                  Evidence Graph
+                  <Badge variant="violet" className="ml-1 text-[9px] py-0 px-1">DAG</Badge>
+                </TabsTrigger>
+                <TabsTrigger value="telemetry" className="gap-1.5 text-xs sm:text-sm">
+                  <Activity className="w-4 h-4 text-cyan-400" />
+                  Telemetry
+                  <Badge variant="cyan" className="ml-1 text-[9px] py-0 px-1">Live</Badge>
+                </TabsTrigger>
+                <TabsTrigger value="audit" className="gap-1.5 text-xs sm:text-sm">
+                  <Terminal className="w-4 h-4 text-status-green-400" />
+                  Audit Trail
+                  <Badge variant="green" className="ml-1 text-[9px] py-0 px-1">Gated</Badge>
                 </TabsTrigger>
               </TabsList>
 
@@ -157,6 +193,22 @@ export function IncidentWorkspace({ incidentId, onBack }: IncidentWorkspaceProps
                   onSelectEvidence={(id) => setSelectedEvidenceId(id === selectedEvidenceId ? null : id)}
                   stageLabels={STAGE_LABELS}
                 />
+              </TabsContent>
+
+              <TabsContent value="graph" className="flex-1 overflow-auto min-h-0">
+                <EvidenceGraphView
+                  incidentId={incidentId}
+                  selectedEvidenceId={selectedEvidenceId}
+                  onSelectEvidence={(id) => setSelectedEvidenceId(id)}
+                />
+              </TabsContent>
+
+              <TabsContent value="telemetry" className="flex-1 overflow-auto min-h-0">
+                <TelemetryPanel incidentId={incidentId} />
+              </TabsContent>
+
+              <TabsContent value="audit" className="flex-1 overflow-auto min-h-0">
+                <AuditTrailView incidentId={incidentId} />
               </TabsContent>
             </Tabs>
           </div>
@@ -278,6 +330,16 @@ export function IncidentWorkspace({ incidentId, onBack }: IncidentWorkspaceProps
           )}
         </div>
       </main>
+
+      {/* Post-Mortem Export Modal */}
+      <PostMortemExportModal
+        isOpen={isExportModalOpen}
+        onClose={() => setIsExportModalOpen(false)}
+        incident={incident}
+        events={events}
+        rootCauseReport={rootCauseReport}
+        patchReview={patchReview}
+      />
     </div>
   );
 }

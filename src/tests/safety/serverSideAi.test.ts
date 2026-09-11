@@ -12,8 +12,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 describe('Server-Side AI Enforcement', () => {
-  const clientDir = path.join(__dirname, '../src/client');
-  const serverDir = path.join(__dirname, '../src/server');
+  const clientDir = path.resolve(__dirname, '../../client');
+  const serverDir = path.resolve(__dirname, '../../server');
 
   it('should not expose NEBIUS_API_KEY to client code', async () => {
     // Check all client-side files for API key references
@@ -52,7 +52,7 @@ describe('Server-Side AI Enforcement', () => {
 
   it('should have proper server/client boundary', async () => {
     // Check that shared types don't expose server internals
-    const sharedPath = path.join(__dirname, '../src/shared/types.ts');
+    const sharedPath = path.resolve(__dirname, '../../shared/types.ts');
     const shared = fs.readFileSync(sharedPath, 'utf-8');
     
     // Shared types should be pure data types, no server logic

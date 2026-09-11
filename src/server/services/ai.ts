@@ -25,7 +25,8 @@ export class AIDemoModeError extends Error {
 
 export async function generateDiagnosis(
   incidentId: string,
-  options: AIOptions = {}
+  options: AIOptions = {},
+  requestOverride?: DiagnosisRequest
 ): Promise<{
   success: boolean;
   response?: ReturnType<typeof InferenceResponseSchema.parse>;
@@ -38,41 +39,58 @@ export async function generateDiagnosis(
     inferenceMode = (process.env.INCIDENT_DEMO_MODE === 'true' || !process.env.NEBIUS_API_KEY) ? 'demo' : 'live',
   } = options;
 
-  // Fetch incident and evidence
-  const incident = await db.query.incidents.findFirst({
-    where: eq(incidents.id, incidentId),
-  });
+  let request: DiagnosisRequest;
+  let evidenceRecords: any[] = [];
 
-  if (!incident) {
-    throw new AIIntegrationError('Incident not found');
-  }
-
-  const evidenceRecords = await db.query.evidence.findMany({
-    where: eq(evidence.incidentId, incidentId),
-  });
-
-  const request: DiagnosisRequest = {
-    incidentId,
-    incident: {
-      title: incident.title,
-      service: incident.service,
-      severity: incident.severity as any,
-      impactSummary: incident.impactSummary,
-      alertContext: incident.alertContext,
-      logs: incident.logs || '',
-      repositoryContext: incident.repositoryContext || '',
-      recentChange: incident.recentChange || '',
-      reproductionInstructions: incident.reproductionInstructions || '',
-    },
-    evidence: evidenceRecords.map((e) => ({
+  if (requestOverride) {
+    request = requestOverride;
+    evidenceRecords = requestOverride.evidence.map((e) => ({
       id: e.id,
-      kind: e.kind as EvidenceKind,
+      incidentId,
+      kind: e.kind,
       label: e.label,
       content: e.content,
-      sourcePath: e.sourcePath ?? undefined,
-      lineRange: e.lineRange ?? undefined,
-    })),
-  };
+      sourcePath: e.sourcePath ?? null,
+      lineRange: e.lineRange ?? null,
+      createdAt: new Date(),
+    }));
+  } else {
+    // Fetch incident and evidence
+    const incident = await db.query.incidents.findFirst({
+      where: eq(incidents.id, incidentId),
+    });
+
+    if (!incident) {
+      throw new AIIntegrationError('Incident not found');
+    }
+
+    evidenceRecords = await db.query.evidence.findMany({
+      where: eq(evidence.incidentId, incidentId),
+    });
+
+    request = {
+      incidentId,
+      incident: {
+        title: incident.title,
+        service: incident.service,
+        severity: incident.severity as any,
+        impactSummary: incident.impactSummary,
+        alertContext: incident.alertContext,
+        logs: incident.logs || '',
+        repositoryContext: incident.repositoryContext || '',
+        recentChange: incident.recentChange || '',
+        reproductionInstructions: incident.reproductionInstructions || '',
+      },
+      evidence: evidenceRecords.map((e) => ({
+        id: e.id,
+        kind: e.kind as EvidenceKind,
+        label: e.label,
+        content: e.content,
+        sourcePath: e.sourcePath ?? undefined,
+        lineRange: e.lineRange ?? undefined,
+      })),
+    };
+  }
 
   try {
     if (inferenceMode === 'demo') {
@@ -175,7 +193,7 @@ Analyze the incident data and evidence to produce a structured diagnosis and rep
   }
 }
 
-function buildPrompt(request: DiagnosisRequest): string {
+export function buildPrompt(request: DiagnosisRequest): string {
   const { incident, evidence } = request;
 
   let prompt = `
@@ -209,15 +227,18 @@ ${incident.reproductionInstructions || '(no reproduction instructions provided)'
     prompt += `
 ### Evidence ${ev.id} (${ev.kind})
 **Label:** ${ev.label}
-**Content:**
+${ev.sourcePath ? `**Source Path:** ${ev.sourcePath}` : ''}
+${ev.lineRange ? `**Lines:** ${ev.lineRange}` : ''}
+\`\`\`
 ${ev.content}
-${ev.sourcePath ? `\n**Source:** ${ev.sourcePath}` : ''}
-${ev.lineRange ? `\n**Lines:** ${ev.lineRange}` : ''}
+\`\`\`
 `;
   }
 
   prompt += `
-## Your Task
+## Instructions
+
+Analyze the incident and evidence above to provide:
 
 1. **Diagnosis:** Analyze all available evidence to determine the root cause. Provide a confident summary with a confidence score between 0 and 1.
 
@@ -236,7 +257,7 @@ Analyze the incident and produce your response now.`;
   return prompt;
 }
 
-function generateDemoResponse(
+export function generateDemoResponse(
   request: DiagnosisRequest,
   evidenceRecords: any[]
 ): ReturnType<typeof InferenceResponseSchema.parse> {

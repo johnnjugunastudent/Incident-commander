@@ -8,8 +8,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { buildPrompt } from '../src/server/services/ai';
-import type { DiagnosisRequest } from '../src/shared/types';
+import { buildPrompt } from '../../server/services/ai.js';
+import type { DiagnosisRequest } from '../../shared/types.js';
 
 describe('Bounded Input', () => {
   const mockIncident = {

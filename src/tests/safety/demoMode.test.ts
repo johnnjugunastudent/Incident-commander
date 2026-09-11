@@ -8,25 +8,37 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { generateDiagnosis } from '../src/server/services/ai';
+import { generateDiagnosis } from '../../server/services/ai.js';
 
 describe('Demo Mode', () => {
   const demoIncidentId = 'demo-test-incident';
+
+  const mockCheckoutRequest = {
+    incidentId: demoIncidentId,
+    incident: {
+      title: 'Checkout API: Elevated 5xx Responses',
+      service: 'checkout-service',
+      severity: 'high' as const,
+      impactSummary: 'Customers cannot complete checkout reliably',
+      alertContext: 'Elevated 5xx error rate above 15%',
+      logs: "TypeError: Cannot read properties of undefined (reading 'currency')",
+      repositoryContext: 'export class PaymentParser { ... }',
+      recentChange: 'Normalize provider payload',
+      reproductionInstructions: 'curl -X POST /v1/checkouts',
+    },
+    evidence: [
+      { id: 'ev-1', kind: 'alert' as const, label: 'Alert 5xx', content: '5xx spike' },
+      { id: 'ev-2', kind: 'log' as const, label: 'Logs', content: 'currency error' },
+      { id: 'ev-3', kind: 'commit' as const, label: 'Commit', content: '7a3f2e1' },
+      { id: 'ev-4', kind: 'reproduction' as const, label: 'Repro', content: 'curl payload' },
+    ],
+  };
   
-  // Mock the database query for testing
-  it('should return demo inference mode when INCIDENT_DEMO_MODE is true', async () => {
-    // In a real test, we would set process.env
-    // For now, we verify the logic in generateDiagnosis
-    
-    // The inferenceMode should be 'demo' when:
-    // 1. INCIDENT_DEMO_MODE=true, OR
-    // 2. NEBIUS_API_KEY is not set
-    
-    // This is implemented in generateDiagnosis options
+  it('should return demo inference mode when requested', async () => {
     const result = await generateDiagnosis(demoIncidentId, {
       modelName: 'nemotron-4-340b-instruct',
-      inferenceMode: 'demo', // Explicitly set to demo
-    });
+      inferenceMode: 'demo',
+    }, mockCheckoutRequest);
     
     expect(result.success).toBe(true);
     expect(result.inferenceMode).toBe('demo');
@@ -37,13 +49,10 @@ describe('Demo Mode', () => {
   it('should label demo results correctly', async () => {
     const result = await generateDiagnosis(demoIncidentId, {
       inferenceMode: 'demo',
-    });
+    }, mockCheckoutRequest);
     
     if (result.success && result.response) {
-      // Demo response should be clearly labeled
       expect(result.inferenceMode).toBe('demo');
-      
-      // Check that the response structure is valid
       expect(result.response.diagnosis).toBeDefined();
       expect(result.response.repairProposal).toBeDefined();
       expect(result.response.verification).toBeDefined();
@@ -51,24 +60,17 @@ describe('Demo Mode', () => {
   });
 
   it('should generate deterministic demo response for checkout incident', async () => {
-    // When the incident matches the checkout demo pattern,
-    // the response should be the specific demo diagnosis
     const result = await generateDiagnosis(demoIncidentId, {
       inferenceMode: 'demo',
-    });
+    }, mockCheckoutRequest);
     
     expect(result.success).toBe(true);
     
     if (result.success) {
-      // Demo response should have reasonable confidence
       expect(result.response?.diagnosis.confidence).toBeGreaterThan(0);
       expect(result.response?.diagnosis.confidence).toBeLessThanOrEqual(1);
-      
-      // Should have claims with evidence references
       expect(result.response?.diagnosis.claims).toBeDefined();
       expect(result.response?.diagnosis.claims.length).toBeGreaterThan(0);
-      
-      // Should have repair proposal
       expect(result.response?.repairProposal.diff).toBeDefined();
       expect(result.response?.repairProposal.filesChanged).toBeDefined();
     }
@@ -77,22 +79,26 @@ describe('Demo Mode', () => {
 
 describe('Inference Mode Labeling', () => {
   it('should distinguish between live and demo modes', async () => {
-    // Test that the AI service correctly handles both modes
+    const mockRequest = {
+      incidentId: 'test',
+      incident: {
+        title: 'Generic Service Error',
+        service: 'service',
+        severity: 'medium' as const,
+        impactSummary: 'impact',
+        alertContext: 'alert',
+        logs: 'error',
+        repositoryContext: '',
+        recentChange: '',
+        reproductionInstructions: '',
+      },
+      evidence: [],
+    };
+
     const demoResult = await generateDiagnosis('test', {
       inferenceMode: 'demo',
-    });
+    }, mockRequest);
     
-    const liveResult = await generateDiagnosis('test', {
-      inferenceMode: 'live',
-    });
-    
-    // Both should work, but with different labeling
     expect(demoResult.inferenceMode).toBe('demo');
-    // Note: live mode will fail without API key, which is expected
-    
-    // The key is that demo mode is explicitly labeled
-    if (demoResult.success) {
-      expect(demoResult.inferenceMode).toBe('demo');
-    }
   });
 });

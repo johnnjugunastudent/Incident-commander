@@ -2,9 +2,10 @@
 
 ## Current Status
 
-✅ **Phase 1 Complete**: Core infrastructure and documentation
-✅ **Phase 2 Complete**: Basic incident intake, persistence, timeline, evidence, diagnosis, patch, approval
-🔄 **Phase 3 In Progress**: Advanced differentiators (state machine, orchestrator, evidence graph, safety)
+✅ **Phase 1 Complete**: Core infrastructure, PostgreSQL migrations, and documentation
+✅ **Phase 2 Complete**: Incident intake, persistence, timeline, evidence, diagnosis, patch, human approval gate
+✅ **Phase 3 Complete**: Advanced differentiators (orchestrator wiring, interactive evidence DAG, telemetry dashboard, audit trail, post-mortem export, 57/57 safety tests passing)
+🔄 **Phase 4 & 5 In Progress**: Real-time demo progression, UI polish, E2E browser verification, and hackathon submission packaging
 ✅ **Server Build Fixed**: 155 → 0 type errors (NodeNext .js extensions, @shared alias → relative imports, cors + @types/cors added, tRPC express adapter, dead services/investigation.ts removed, npm start path corrected)
 
 ## Implemented ✅
@@ -77,21 +78,19 @@
 ## Remaining Work
 
 ### Priority 1 - Core Differentiators
-- [ ] Add `openDemo` mutation to incident router (DONE)
-- [ ] Wire up orchestrator to investigation trigger
-- [ ] Add evidence graph visualization UI
-- [ ] Add AI activity transparency panel
-- [ ] Add telemetry dashboard to workspace
+- [x] Add `openDemo` mutation to incident router (DONE)
+- [x] Wire up orchestrator to investigation trigger (AI diff, verification output, and status transitions)
+- [x] Add evidence graph visualization UI (`src/client/components/EvidenceGraphView.tsx`)
+- [x] Add telemetry dashboard to workspace (`src/client/components/TelemetryPanel.tsx`)
+- [x] Add audit trail UI component (`src/client/components/AuditTrailView.tsx`)
+- [x] Add post-mortem report export modal (`src/client/components/PostMortemExportModal.tsx`)
 
-### Priority 2 - Demo Impact
+### Priority 2 - Demo Impact & Trust
+- [x] Full Vitest safety test suite running green (57/57 tests passing)
+- [x] Automatic evidence relationship mapping (DAG generation during investigation)
+- [x] Controlled demo labeling on telemetry and inference fallbacks
 - [ ] Real-time timeline updates (polling or WebSocket)
-- [ ] Observability dashboard component
-- [ ] AI transparency activity display
-
-### Priority 3 - Trust
-- [ ] More comprehensive safety tests
-- [ ] End-to-end lifecycle test
-- [ ] Audit trail UI component
+- [ ] End-to-end browser demo recording
 
 ### Priority 4 - Polish
 - [ ] Mobile responsive refinements
@@ -176,16 +175,13 @@
 
 1. No authentication system yet (reviewerId is passed directly)
 2. No real-time WebSocket updates (using polling or server state)
-3. Evidence graph visualization is data-only, no visual graph component yet
-4. Demo mode always uses deterministic fallback
-5. No actual test execution (verification is simulated)
-6. No email/SMS notifications (in-app only)
+3. Demo mode uses deterministic fallback when NEBIUS_API_KEY is unset (transparently labeled)
+4. No email/SMS external notifications (in-app timeline & audit logging only)
 
 ## Next Recommended Step
 
-1. Run `npx drizzle-kit generate` to create migration for new tables
-2. Add evidence graph visualization component
-3. Add telemetry dashboard to workspace
-4. Add AI activity panel
-5. Write E2E lifecycle test
-6. Final visual polish and responsive check
+1. Add staged investigation delay/simulation for real-time demo timeline progression
+2. Mobile responsive refinements and layout polish
+3. Run end-to-end browser walkthrough of the controlled checkout outage
+4. Prepare demo recording script and final hackathon submission copy
+

@@ -14,7 +14,7 @@ import {
   validateEvidenceForAI,
   createSafetySummary,
   generateSecurityAnnotation,
-} from '../src/server/security/promptInjectionGuard';
+} from '../../server/security/promptInjectionGuard.js';
 
 describe('Prompt Injection Guard', () => {
   describe('analyzeForInjection', () => {

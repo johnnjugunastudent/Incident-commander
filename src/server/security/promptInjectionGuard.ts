@@ -27,12 +27,12 @@ const SUSPICIOUS_PATTERNS = [
   /forget\s+(your|the)\s+(instructions|rules|purpose)/i,
   /you\s+are\s+now\s+(a|an)\s+/i,
   /new\s+instructions?\s*:/i,
-  /system\s*prompt\s*:/i,
+  /system\s*(prompt|instruction)/i,
   /act\s+as\s+(if|though)/i,
   
   // Attempt to reveal secrets
-  /reveal\s+(your|the)\s+(api|secret|key|password|token)/i,
-  /show\s+(me|us)\s+(your|the)\s+(api|secret|key|password|token)/i,
+  /reveal\s+(?:(?:your|the)\s+)?(api|secret|key|password|token)/i,
+  /show\s+(?:(?:me|us)\s+)?(?:(?:your|the)\s+)?(api|secret|key|password|token)/i,
   /what\s+is\s+(your|the)\s+(api|secret|key|password|token)/i,
   /output\s+(your|the)\s+(api|secret|key|password|token)/i,
   /print\s+(your|the)\s+(api|secret|key|password|token)/i,
@@ -116,25 +116,25 @@ export function analyzeForInjection(content: string): InjectionAnalysis {
 /**
  * Sanitize content to neutralize potential injection vectors
  */
-function sanitizeContent(content: string): string {
+export function sanitizeContent(content: string): string {
   // Escape sequences that could be interpreted as commands
   let sanitized = content;
   
-  // Neutralize "ignore" commands
+  // Neutralize "ignore" commands (including "ignore all previous instructions")
   sanitized = sanitized.replace(
-    /(ignore|forget|disregard)\s+(all|the|previous)\s+(instructions|rules|guidance|prompt)/gi,
+    /(ignore|forget|disregard)\s+(?:all\s+previous|all|the|previous|\s*)*\s*(instructions|rules|guidance|prompt|commands)/gi,
     '[REDACTED: instruction override attempt]'
   );
   
   // Neutralize secret revelation requests
   sanitized = sanitized.replace(
-    /(reveal|show|output|print|display)\s+(your|the)\s+(api|secret|key|password|token|credential)/gi,
+    /(reveal|show|output|print|display)\s+(?:(?:your|the|me|us)\s+)*(api|secret|key|password|token|credential)/gi,
     '[REDACTED: secret access attempt]'
   );
   
   // Neutralize system prompt references
   sanitized = sanitized.replace(
-    /(system\s*prompt|system\s+instruction|primary\s+instruction)/gi,
+    /(?:your\s+)?(system\s*prompt|system\s+instruction|primary\s+instruction)/gi,
     '[REDACTED: system reference]'
   );
   
@@ -142,6 +142,12 @@ function sanitizeContent(content: string): string {
   sanitized = sanitized.replace(
     /\b(jailbreak|dan\s*mode|developer\s*mode|uncensored|unfiltered)\b/gi,
     '[REDACTED]'
+  );
+
+  // Neutralize injected instruction commands (e.g., skip verification)
+  sanitized = sanitized.replace(
+    /(?:(?:your\s+)?new\s+instructions?\s*(?:are\s*:|:)\s*[^.\n]*|skip\s+verification)/gi,
+    '[REDACTED: instruction override attempt]'
   );
   
   // Escape any potential command injection in log-like content

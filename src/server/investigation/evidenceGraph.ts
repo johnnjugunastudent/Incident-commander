@@ -33,12 +33,12 @@ export interface EvidenceChain {
   source: EvidenceNode;
   path: Array<{
     from: EvidenceNode;
-    relationship: 'supports' | 'contradicts' | 'references' | 'derived_from';
+    relationship: 'supports' | 'contradicts' | 'references' | 'derived_from' | 'verifies';
     to: EvidenceNode;
   }>;
 }
 
-export type RelationshipType = 'supports' | 'contradicts' | 'references' | 'derived_from';
+export type RelationshipType = 'supports' | 'contradicts' | 'references' | 'derived_from' | 'verifies';
 
 /**
  * Create an evidence relationship
